@@ -545,32 +545,22 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Affiche le menu d'administration"""
-    is_enabled = access_manager.is_access_code_enabled()
-    status_text = "✅ Activé" if is_enabled else "❌ Désactivé"
-    info_status = "✅ Activé" if CONFIG.get('info_button_enabled', True) else "❌ Désactivé"
-
+    """Affiche le menu d'administration principal simplifié"""
+    
     keyboard = [
-        [InlineKeyboardButton("➕ Ajouter une catégorie", callback_data="add_category")],
-        [InlineKeyboardButton("➕ Ajouter un produit", callback_data="add_product")],
-        [InlineKeyboardButton("❌ Supprimer une catégorie", callback_data="delete_category")],
-        [InlineKeyboardButton("❌ Supprimer un produit", callback_data="delete_product")],
-        [InlineKeyboardButton("✏️ Modifier une catégorie", callback_data="edit_category")],
-        [InlineKeyboardButton("✏️ Modifier un produit", callback_data="edit_product")],
-        [InlineKeyboardButton("🎯 Gérer boutons accueil", callback_data="show_custom_buttons")],
-        [InlineKeyboardButton(f"🔒 Code d'accès: {status_text}", callback_data="toggle_access_code")],
-        [InlineKeyboardButton("📊 Statistiques", callback_data="show_stats")],
-        [InlineKeyboardButton("🛒 Modifier bouton Commander", callback_data="edit_order_button")],
-        [InlineKeyboardButton("🏠 Modifier message d'accueil", callback_data="edit_welcome")],  
-        [InlineKeyboardButton("🖼️ Modifier image bannière", callback_data="edit_banner_image")],
-        [InlineKeyboardButton("📢 Gestion annonces", callback_data="manage_broadcasts")],
+        [InlineKeyboardButton("📦 Gestion du catalogue", callback_data="menu_catalog")],
+        [InlineKeyboardButton("🎨 Configuration du bot", callback_data="menu_config")],
+        [InlineKeyboardButton("👥 Utilisateurs & Accès", callback_data="menu_users")],
+        [
+            InlineKeyboardButton("📊 Statistiques", callback_data="show_stats"),
+            InlineKeyboardButton("📢 Annonces", callback_data="manage_broadcasts")
+        ],
         [InlineKeyboardButton("🔙 Retour à l'accueil", callback_data="back_to_home")]
     ]
-    keyboard = await admin_features.add_user_buttons(keyboard)
 
     admin_text = (
         "🔧 *Menu d'administration*\n\n"
-        "Sélectionnez une action à effectuer :"
+        "Sélectionnez une catégorie :"
     )
 
     try:
@@ -580,22 +570,15 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
-            context.user_data['menu_message_id'] = message.message_id
         else:
             message = await update.message.reply_text(
                 admin_text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
-            context.user_data['menu_message_id'] = message.message_id
+        context.user_data['menu_message_id'] = message.message_id
     except Exception as e:
         print(f"Erreur dans show_admin_menu: {e}")
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=admin_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
 
     return CHOOSING
 
@@ -1717,6 +1700,76 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return CHOOSING
 
+    elif query.data == "menu_catalog":
+        if str(update.effective_user.id) not in ADMIN_IDS:
+            await query.answer("❌ Accès non autorisé")
+            return CHOOSING
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Ajouter une catégorie", callback_data="add_category")],
+            [InlineKeyboardButton("➕ Ajouter un produit", callback_data="add_product")],
+            [InlineKeyboardButton("✏️ Modifier une catégorie", callback_data="edit_category")],
+            [InlineKeyboardButton("✏️ Modifier un produit", callback_data="edit_product")],
+            [InlineKeyboardButton("❌ Supprimer une catégorie", callback_data="delete_category")],
+            [InlineKeyboardButton("❌ Supprimer un produit", callback_data="delete_product")],
+            [InlineKeyboardButton("🔙 Retour", callback_data="admin")]
+        ]
+    
+        await query.edit_message_text(
+            "📦 *Gestion du catalogue*\n\n"
+            "Que souhaitez-vous faire ?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return CHOOSING
+
+    # Sous-menu Configuration
+    elif query.data == "menu_config":
+        if str(update.effective_user.id) not in ADMIN_IDS:
+            await query.answer("❌ Accès non autorisé")
+            return CHOOSING
+        
+        keyboard = [
+            [InlineKeyboardButton("🏠 Modifier message d'accueil", callback_data="edit_welcome")],
+            [InlineKeyboardButton("🖼️ Modifier image bannière", callback_data="edit_banner_image")],
+            [InlineKeyboardButton("🛒 Modifier bouton Commander", callback_data="edit_order_button")],
+            [InlineKeyboardButton("🎯 Gérer boutons personnalisés", callback_data="show_custom_buttons")],
+            [InlineKeyboardButton("🔙 Retour", callback_data="admin")]
+        ]
+    
+        await query.edit_message_text(
+            "🎨 *Configuration du bot*\n\n"
+            "Sélectionnez un élément à configurer :",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return CHOOSING
+
+    # Sous-menu Utilisateurs & Accès
+    elif query.data == "menu_users":
+        if str(update.effective_user.id) not in ADMIN_IDS:
+            await query.answer("❌ Accès non autorisé")
+            return CHOOSING
+    
+        is_enabled = access_manager.is_access_code_enabled()
+        status_text = "✅ Activé" if is_enabled else "❌ Désactivé"
+    
+        keyboard = [
+            [InlineKeyboardButton("👥 Gérer utilisateurs", callback_data="manage_users")],
+            [InlineKeyboardButton(f"🔒 Code d'accès: {status_text}", callback_data="toggle_access_code")]
+        ]
+        
+        keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="admin")])
+    
+        await query.edit_message_text(
+            "👥 *Gestion des utilisateurs et accès*\n\n"
+            f"Système de codes : {status_text}\n\n"
+            "Que souhaitez-vous faire ?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return CHOOSING
+
     elif query.data.startswith("custom_text_"):
         button_id = query.data.replace("custom_text_", "")
         with open('config/config.json', 'r') as f:
@@ -2105,26 +2158,48 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             data = get_original_data(query.data)
             if not data:
                 raise ValueError("Données non trouvées")
-                
-            category, product_name = data.split("|||")
             
+            category, product_name = data.split("|||")
+        
             if category in CATALOG:
+                # Supprimer le produit
                 CATALOG[category] = [p for p in CATALOG[category] if p['name'] != product_name]
-                save_catalog(CATALOG)
+            
+                # IMPORTANT : Si la catégorie est maintenant vide, ajouter SOLD OUT
+                if len(CATALOG[category]) == 0:
+                    CATALOG[category] = [{
+                        'name': 'SOLD OUT ! ❌',
+                        'price': 'Non disponible',
+                        'description': 'Cette catégorie est temporairement en rupture de stock.',
+                        'media': []
+                    }]
                 
+                    await query.message.edit_text(
+                        f"✅ Le produit *{product_name}* a été supprimé avec succès !\n\n"
+                        f"⚠️ La catégorie *{category}* est maintenant vide et a été mise en SOLD OUT automatiquement.",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
+                        ]])
+                    )
+                else:
+                    # Message normal si la catégorie n'est pas vide
+                    await query.message.edit_text(
+                        f"✅ Le produit *{product_name}* a été supprimé avec succès !",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
+                        ]])
+                    )
+            
+                save_catalog(CATALOG)
+            
                 # Nettoyer le mapping
                 CALLBACK_DATA_MAPPING.pop(query.data, None)
-                
-                await query.message.edit_text(
-                    f"✅ Le produit *{product_name}* a été supprimé avec succès !",
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
-                    ]])
-                )
+            
             else:
                 raise ValueError("Catégorie non trouvée")
-                
+            
             return CHOOSING
         except Exception as e:
             print(f"Erreur lors de la suppression du produit: {e}")
