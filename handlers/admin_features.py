@@ -1,4 +1,4 @@
-﻿import json
+import json
 import pytz  
 import asyncio
 import string
@@ -1110,15 +1110,46 @@ class AdminFeatures:
         """Permet de modifier une annonce existante"""
         query = update.callback_query
         broadcast_id = query.data.replace("edit_broadcast_", "")
-    
+
         if broadcast_id in self.broadcasts:
             broadcast = self.broadcasts[broadcast_id]
+        
+            # Vérifier l'âge du broadcast
+            try:
+                broadcast_timestamp = float(broadcast_id)
+                current_time = datetime.now().timestamp()
+                hours_passed = (current_time - broadcast_timestamp) / 3600  # Convertir en heures
+            
+                if hours_passed > 48:
+                    await query.answer(
+                        "⚠️ Cette annonce a plus de 48 heures et ne peut plus être modifiée sur Telegram.",
+                        show_alert=True
+                    )
+                    # Afficher quand même le menu mais avec un avertissement
+                    keyboard = [
+                        [InlineKeyboardButton("❌ Supprimer l'annonce", callback_data=f"delete_broadcast_{broadcast_id}")],
+                        [InlineKeyboardButton("🔙 Retour", callback_data="manage_broadcasts")]
+                    ]
+                
+                    await query.edit_message_text(
+                        f"⚠️ *Annonce non modifiable*\n\n"
+                        f"Cette annonce a été envoyée il y a plus de 48 heures.\n"
+                        f"Telegram ne permet plus de modifier les messages après ce délai.\n\n"
+                        f"Message actuel :\n{broadcast['content'][:200]}...",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                    return "CHOOSING"
+            except:
+                pass  # Si on ne peut pas parser le timestamp, continuer normalement
+        
+            # Menu normal si moins de 48h
             keyboard = [
                 [InlineKeyboardButton("✏️ Modifier l'annonce", callback_data=f"edit_broadcast_content_{broadcast_id}")],
                 [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_broadcast_{broadcast_id}")],
                 [InlineKeyboardButton("🔙 Retour", callback_data="manage_broadcasts")]
             ]
-        
+    
             await query.edit_message_text(
                 f"📢 *Gestion de l'annonce*\n\n"
                 f"Message actuel :\n{broadcast['content'][:200]}...",
@@ -1132,26 +1163,42 @@ class AdminFeatures:
                     InlineKeyboardButton("🔙 Retour", callback_data="manage_broadcasts")
                 ]])
             )
-    
+
         return "CHOOSING"
 
     async def edit_broadcast_content(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Démarre l'édition d'une annonce"""
+        """Démarre l'édition d'une annonce avec vérification de l'âge"""
         query = update.callback_query
         broadcast_id = query.data.replace("edit_broadcast_content_", "")
+
+        # Vérifier une dernière fois l'âge avant de permettre l'édition
+        try:
+            broadcast_timestamp = float(broadcast_id)
+            current_time = datetime.now().timestamp()
+            hours_passed = (current_time - broadcast_timestamp) / 3600
+        
+            if hours_passed > 48:
+                await query.answer(
+                    "⚠️ Cette annonce ne peut plus être modifiée (plus de 48h)",
+                    show_alert=True
+                )
+                return "CHOOSING"
+        except:
+            pass
 
         context.user_data['editing_broadcast_id'] = broadcast_id
 
         # Envoyer le message d'instruction et stocker son ID
         message = await query.edit_message_text(
             "✏️ *Modification de l'annonce*\n\n"
-            "Envoyez un nouveau message (texte et/ou média) pour remplacer cette annonce.",
+            "Envoyez un nouveau message (texte et/ou média) pour remplacer cette annonce.\n\n"
+            "⚠️ *Note :* Si des utilisateurs ont reçu ce message il y a plus de 48h, il sera supprimé et renvoyé.",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 Annuler", callback_data=f"edit_broadcast_{broadcast_id}")
             ]])
         )
-    
+
         # Stocker l'ID du message d'instruction
         context.user_data['instruction_message_id'] = message.message_id
 
@@ -1176,105 +1223,138 @@ class AdminFeatures:
                 print(f"Error deleting messages: {e}")
 
             admin_id = update.effective_user.id
-            new_content = update.message.text if update.message.text else update.message.caption if update.message.caption else "Media sans texte"
-        
-            # Convertir les nouvelles entités
-            new_entities = None
-            if update.message.entities:
-                new_entities = [{'type': entity.type, 
-                               'offset': entity.offset,
-                               'length': entity.length} 
-                              for entity in update.message.entities]
-            elif update.message.caption_entities:
-                new_entities = [{'type': entity.type, 
-                               'offset': entity.offset,
-                               'length': entity.length} 
-                              for entity in update.message.caption_entities]
-
             broadcast = self.broadcasts[broadcast_id]
-            broadcast['content'] = new_content
-            broadcast['entities'] = new_entities
+        
+            # Déterminer le type du nouveau message
+            new_type = 'text'
+            new_file_id = None
+            if update.message.photo:
+                new_type = 'photo'
+                new_file_id = update.message.photo[-1].file_id
+            elif update.message.sticker:
+                new_type = 'sticker'
+                new_file_id = update.message.sticker.file_id
+
+            # Si le type de message a changé, on ne peut pas éditer, il faut supprimer et renvoyer
+            old_type = broadcast.get('type', 'text')
+            type_changed = old_type != new_type
 
             success = 0
             failed = 0
-            messages_updated = []
-        
-            # Tenter de modifier les messages existants
-            for user_id, msg_id in broadcast['message_ids'].items():
-                if int(user_id) == admin_id:  # Skip l'admin
-                    continue
-                try:
-                    await context.bot.edit_message_text(
-                        chat_id=user_id,
-                        message_id=msg_id,
-                        text=new_content,
-                        entities=update.message.entities,
-                        reply_markup=self._create_message_keyboard()
-                    )
-                    success += 1
-                    messages_updated.append(user_id)
-                except Exception as e:
-                    print(f"Error updating message for user {user_id}: {e}")
-                    failed += 1
+            deleted = 0
 
-            # Pour les utilisateurs qui n'ont pas reçu le message
-            for user_id in self._users.keys():
-                if (str(user_id) not in messages_updated and 
-                    self.is_user_authorized(int(user_id)) and 
-                    int(user_id) != admin_id):  # Skip l'admin
-                    try:
-                        sent_msg = await context.bot.send_message(
-                            chat_id=user_id,
-                            text=new_content,
-                            entities=update.message.entities,
-                            reply_markup=self._create_message_keyboard()
-                        )
+            # Parcourir tous les utilisateurs
+            for user_id, msg_id in broadcast['message_ids'].items():
+                if int(user_id) == admin_id:
+                    continue
+            
+                try:
+                    if type_changed:
+                        # Si le type a changé, supprimer l'ancien message
+                        try:
+                            await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+                            deleted += 1
+                        except:
+                            pass
+                    
+                        # Envoyer un nouveau message
+                        if new_type == 'photo':
+                            sent_msg = await context.bot.send_photo(
+                                chat_id=user_id,
+                                photo=new_file_id,
+                                caption=update.message.caption,
+                                caption_entities=update.message.caption_entities,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                        elif new_type == 'sticker':
+                            sent_msg = await context.bot.send_sticker(
+                                chat_id=user_id,
+                                sticker=new_file_id,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                        else:
+                            sent_msg = await context.bot.send_message(
+                                chat_id=user_id,
+                                text=update.message.text,
+                                entities=update.message.entities,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                    
+                        # Mettre à jour l'ID du message
                         broadcast['message_ids'][str(user_id)] = sent_msg.message_id
                         success += 1
-                    except Exception as e:
-                        print(f"Error sending new message to user {user_id}: {e}")
+                    else:
+                        # Si c'est le même type, essayer d'éditer
+                        if new_type == 'text':
+                            await context.bot.edit_message_text(
+                                chat_id=user_id,
+                                message_id=msg_id,
+                                text=update.message.text,
+                                entities=update.message.entities,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                            success += 1
+                        else:
+                            # Pour photo/sticker, on ne peut pas éditer, il faut supprimer et renvoyer
+                            raise Exception("Cannot edit media messages")
+                        
+                except Exception as e:
+                    # Si l'édition échoue (message trop vieux ou autre), essayer de supprimer et renvoyer
+                    try:
+                        await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+                        deleted += 1
+                    except:
+                        pass
+                
+                    try:
+                        # Envoyer un nouveau message
+                        if new_type == 'photo':
+                            sent_msg = await context.bot.send_photo(
+                                chat_id=user_id,
+                                photo=new_file_id,
+                                caption=update.message.caption,
+                                caption_entities=update.message.caption_entities,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                        elif new_type == 'sticker':
+                            sent_msg = await context.bot.send_sticker(
+                                chat_id=user_id,
+                                sticker=new_file_id,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                        else:
+                            sent_msg = await context.bot.send_message(
+                                chat_id=user_id,
+                                text=update.message.text,
+                                entities=update.message.entities,
+                                reply_markup=self._create_message_keyboard()
+                            )
+                    
+                        broadcast['message_ids'][str(user_id)] = sent_msg.message_id
+                        success += 1
+                    except Exception as send_error:
+                        print(f"Error sending new message to {user_id}: {send_error}")
                         failed += 1
 
+            # Mettre à jour les informations du broadcast
+            broadcast['content'] = update.message.text if update.message.text else update.message.caption if update.message.caption else "Media sans texte"
+            broadcast['type'] = new_type
+            broadcast['file_id'] = new_file_id
+            broadcast['caption'] = update.message.caption if update.message.photo else None
+        
             self._save_broadcasts()
 
-            # Créer la bannière de gestion des annonces
-            keyboard = []
-            if self.broadcasts:
-                for b_id, broadcast in self.broadcasts.items():
-                    keyboard.append([InlineKeyboardButton(
-                        f"📢 {broadcast['content'][:30]}...",
-                        callback_data=f"edit_broadcast_{b_id}"
-                    )])
-        
-            keyboard.append([InlineKeyboardButton("➕ Nouvelle annonce", callback_data="start_broadcast")])
-            keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="admin")])
-        
-            # Envoyer la nouvelle bannière avec le contenu de l'annonce
+            # Message de confirmation
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="📢 *Gestion des annonces*\n\n"
-                     "Sélectionnez une annonce à modifier ou créez-en une nouvelle.",
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                text=f"✅ Annonce modifiée !\n\n"
+                     f"• Messages édités : {success}\n"
+                     f"• Messages supprimés : {deleted}\n"
+                     f"• Échecs : {failed}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Retour", callback_data="manage_broadcasts")
+                ]])
             )
-
-            # Message de confirmation avec le contenu
-            confirmation_message = await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"✅ Message modifié ({success} succès, {failed} échecs)\n\n"
-                     f"📝 *Contenu de l'annonce :*\n{new_content}",
-                parse_mode='Markdown'
-            )
-
-            # Programmer la suppression du message après 3 secondes
-            async def delete_message():
-                await asyncio.sleep(3)
-                try:
-                    await confirmation_message.delete()
-                except Exception as e:
-                    print(f"Error deleting confirmation message: {e}")
-
-            asyncio.create_task(delete_message())
 
             return "CHOOSING"
 
@@ -1362,21 +1442,120 @@ class AdminFeatures:
         return "CHOOSING"
 
     async def delete_broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Supprime une annonce"""
+        """Demande confirmation avant de supprimer une annonce"""
         query = update.callback_query
-        broadcast_id = query.data.replace("delete_broadcast_", "")
+    
+        if query.data.startswith("delete_broadcast_"):
+            broadcast_id = query.data.replace("delete_broadcast_", "")
         
-        if broadcast_id in self.broadcasts:
-            del self.broadcasts[broadcast_id]
-            self._save_broadcasts()  # Sauvegarder après suppression
-        await query.edit_message_text(
-            "✅ *L'annonce a été supprimée avec succès !*",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Retour aux annonces", callback_data="manage_broadcasts")
-            ]])
-        )
+            if broadcast_id in self.broadcasts:
+                broadcast = self.broadcasts[broadcast_id]
+            
+                # Vérifier l'âge du broadcast
+                try:
+                    broadcast_timestamp = float(broadcast_id)
+                    current_time = datetime.now().timestamp()
+                    hours_passed = (current_time - broadcast_timestamp) / 3600
+                
+                    if hours_passed > 48:
+                        age_warning = "\n\n⚠️ *Note :* Cette annonce a plus de 48h. Certains messages pourraient ne pas être supprimés."
+                    else:
+                        age_warning = ""
+                except:
+                    age_warning = ""
+            
+                # Demander confirmation
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Oui, supprimer", callback_data=f"confirm_delete_broadcast_{broadcast_id}"),
+                        InlineKeyboardButton("❌ Non, annuler", callback_data=f"edit_broadcast_{broadcast_id}")
+                    ]
+                ]
+            
+                await query.edit_message_text(
+                    f"🗑️ *Confirmation de suppression*\n\n"
+                    f"Êtes-vous sûr de vouloir supprimer cette annonce ?\n\n"
+                    f"📌 *Contenu :* {broadcast['content'][:100]}...\n"
+                    f"👥 *Envoyée à :* {len(broadcast.get('message_ids', {}))} utilisateurs{age_warning}\n\n"
+                    f"⚠️ *Cette action est irréversible et supprimera l'annonce chez tous les utilisateurs.*",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+    
+        elif query.data.startswith("confirm_delete_broadcast_"):
+            # Suppression confirmée
+            broadcast_id = query.data.replace("confirm_delete_broadcast_", "")
         
+            if broadcast_id in self.broadcasts:
+                broadcast = self.broadcasts[broadcast_id]
+            
+                # Message de progression
+                progress_msg = await query.edit_message_text(
+                    "🗑️ *Suppression en cours...*",
+                    parse_mode='Markdown'
+                )
+            
+                deleted = 0
+                failed = 0
+                too_old = 0
+            
+                # Vérifier l'âge
+                try:
+                    broadcast_timestamp = float(broadcast_id)
+                    current_time = datetime.now().timestamp()
+                    hours_passed = (current_time - broadcast_timestamp) / 3600
+                    is_too_old = hours_passed > 48
+                except:
+                    is_too_old = False
+            
+                # Supprimer tous les messages chez les utilisateurs
+                for user_id, msg_id in broadcast.get('message_ids', {}).items():
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=user_id,
+                            message_id=msg_id
+                        )
+                        deleted += 1
+                    except Exception as e:
+                        error_message = str(e).lower()
+                        if "message to delete not found" in error_message:
+                            too_old += 1
+                        else:
+                            failed += 1
+                        print(f"Erreur suppression message pour {user_id}: {e}")
+            
+                # Supprimer le broadcast de la liste
+                del self.broadcasts[broadcast_id]
+                self._save_broadcasts()
+            
+                # Message de confirmation avec détails
+                result_text = f"✅ *L'annonce a été supprimée !*\n\n"
+                result_text += f"📊 *Résultats :*\n"
+                result_text += f"• Messages supprimés : {deleted}\n"
+            
+                if too_old > 0:
+                    result_text += f"• Messages trop anciens : {too_old}\n"
+                if failed > 0:
+                    result_text += f"• Échecs (bot bloqué) : {failed}\n"
+            
+                if is_too_old:
+                    result_text += f"\n_⚠️ Note : Cette annonce avait plus de 48h. Certains messages n'ont pas pu être supprimés._"
+            
+                await progress_msg.edit_text(
+                    result_text,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Retour aux annonces", callback_data="manage_broadcasts")
+                    ]])
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Cette annonce n'existe plus.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Retour", callback_data="manage_broadcasts")
+                    ]])
+                )
+    
         return "CHOOSING"
 
     async def send_broadcast_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
