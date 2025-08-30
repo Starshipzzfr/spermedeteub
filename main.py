@@ -1,4 +1,4 @@
-﻿from handlers.admin_features import AdminFeatures
+from handlers.admin_features import AdminFeatures
 from modules.access_manager import AccessManager
 import json
 import logging
@@ -1799,6 +1799,9 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return CHOOSING
+
+    elif query.data.startswith("confirm_delete_broadcast_"):
+        return await admin_features.delete_broadcast(update, context)
 
     elif query.data.startswith("delete_button_"):
         if str(update.effective_user.id) not in ADMIN_IDS:
