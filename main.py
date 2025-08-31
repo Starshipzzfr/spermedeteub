@@ -377,7 +377,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_features.register_user(user)
     
     if not access_manager.is_authorized(user.id):
-
         if 'initial_welcome_message_id' in context.user_data:
             try:
                 await context.bot.delete_message(
@@ -432,10 +431,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 Cliquez sur MENU pour voir les catégories"
     )
 
-    keyboard.extend([
-        [InlineKeyboardButton("📱 Réseaux", callback_data="show_networks")]
-
-    ])
+    # Vérifier si la catégorie Réseaux est activée
+    if config.get('networks_enabled', True):
+        keyboard.append([InlineKeyboardButton("📱 Réseaux", callback_data="show_networks")])
 
     if str(update.effective_user.id) in ADMIN_IDS and access_manager.is_access_code_enabled():
         keyboard.extend([
@@ -481,22 +479,11 @@ async def show_networks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("💭 Canal telegram", url="https://t.me/+aHbA9_8tdTQwYThk")
+            InlineKeyboardButton("💭 Canal telegram", url="https://t.me/+wS7RBp6QV78xNjhk")
         ],
 
         [
-            InlineKeyboardButton("🥔 Contact potato", url="https://dlj199.org/christianDry547")
-        ],
-        [
-            InlineKeyboardButton("📱 Instagram", url="https://www.instagram.com/christiandry.54?igsh=MWU1dXNrbXdpMzllNA%3D%3D&utm_source=qr")
-        ],
-
-        [
-            InlineKeyboardButton("🌐 Signal", url="https://signal.group/#CjQKIJNEETZNr9_LRMvShQbblk_NUdDyabA7e_eyUQY6-ptsEhBSpXex0cjIoOEYQ4H3D8K5")
-        ],
-
-        [
-            InlineKeyboardButton("👻 Snapchat", url="https://snapchat.com/t/0HumwTKi")
+            InlineKeyboardButton("🥔 Canal potato", url="https://doudlj.org/joinchat/5ZEmn25bOsTR7f-aYdvC0Q")
         ],
         [InlineKeyboardButton("🔙 Retour", callback_data="back_to_home")]
     ]
@@ -822,7 +809,38 @@ async def handle_button_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             print(f"Erreur lors de la suppression du message {msg_id}: {e}")
     
-    # Mode création
+    # Vérifier si on est en mode édition
+    if 'editing_button_id' in context.user_data:
+        button_id = context.user_data['editing_button_id']
+        
+        # Charger la configuration
+        with open('config/config.json', 'r') as f:
+            config = json.load(f)
+        
+        # Mettre à jour le nom du bouton
+        for button in config.get('custom_buttons', []):
+            if button['id'] == button_id:
+                button['name'] = button_name
+                break
+        
+        # Sauvegarder la configuration
+        with open('config/config.json', 'w') as f:
+            json.dump(config, f, indent=4)
+        
+        # Message de confirmation
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text="✅ Nom du bouton modifié avec succès !",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Retour", callback_data="show_custom_buttons")
+            ]])
+        )
+        
+        # Nettoyer les données utilisateur
+        context.user_data.clear()
+        return CHOOSING
+    
+    # Mode création (code existant)
     context.user_data['temp_button'] = {'name': button_name}
     
     # Envoyer le nouveau message et stocker son ID pour suppression ultérieure
@@ -926,7 +944,7 @@ async def handle_button_value(update: Update, context: ContextTypes.DEFAULT_TYPE
             if button['id'] == button_id:
                 button['value'] = value
                 button['type'] = 'url' if is_url else 'text'
-                button['parse_mode'] = 'HTML' if not is_url else None  # Ajouter le parse_mode HTML si ce n'est pas une URL
+                button['parse_mode'] = 'HTML' if not is_url else None
                 break
         
         with open('config/config.json', 'w') as f:
@@ -960,13 +978,16 @@ async def handle_button_value(update: Update, context: ContextTypes.DEFAULT_TYPE
         'name': temp_button.get('name', 'Bouton'),
         'type': 'url' if is_url else 'text',
         'value': value,
-        'parse_mode': 'HTML' if not is_url else None  # Ajouter le parse_mode HTML si ce n'est pas une URL
+        'parse_mode': 'HTML' if not is_url else None
     }
     
     config['custom_buttons'].append(new_button)
     
     with open('config/config.json', 'w') as f:
         json.dump(config, f, indent=4)
+    
+    # Nettoyer les données utilisateur
+    context.user_data.clear()
     
     await context.bot.send_message(
         chat_id=chat_id,
@@ -1110,11 +1131,20 @@ async def handle_banner_image(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Obtenir l'ID du fichier de la photo
     file_id = update.message.photo[-1].file_id
-    CONFIG['banner_image'] = file_id
-
-    # Sauvegarder la configuration
+    
+    # IMPORTANT : Recharger la configuration depuis le fichier pour ne pas écraser les modifications récentes
+    with open('config/config.json', 'r', encoding='utf-8') as f:
+        current_config = json.load(f)
+    
+    # Mettre à jour l'image bannière
+    current_config['banner_image'] = file_id
+    
+    # Sauvegarder la configuration mise à jour
     with open('config/config.json', 'w', encoding='utf-8') as f:
-        json.dump(CONFIG, f, indent=4)
+        json.dump(current_config, f, indent=4)
+    
+    # Mettre aussi à jour la variable globale CONFIG pour cohérence
+    CONFIG['banner_image'] = file_id
 
     # Supprimer le message contenant l'image
     await update.message.delete()
@@ -1141,12 +1171,12 @@ async def handle_banner_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         except:
             pass
 
-    # Envoyer la nouvelle bannière
-    if CONFIG.get('banner_image'):
+    # Envoyer la nouvelle bannière (utiliser current_config au lieu de CONFIG)
+    if current_config.get('banner_image'):
         try:
             banner_message = await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
-                photo=CONFIG['banner_image']
+                photo=current_config['banner_image']
             )
             context.user_data['banner_message_id'] = banner_message.message_id
         except Exception as e:
@@ -1723,20 +1753,134 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return CHOOSING
 
+    elif query.data == "manage_networks":
+        return await manage_networks(update, context)
+
+    elif query.data == "toggle_networks":
+        return await toggle_networks(update, context)
+
+    elif query.data == "add_network_button":
+        return await add_network_button(update, context)
+
+    elif query.data == "delete_network_button":
+        return await delete_network_button(update, context)
+
+    elif query.data == "edit_network_button":
+        return await edit_network_button(update, context)
+
+    elif query.data.startswith("del_network_"):
+        network_id = query.data.replace("del_network_", "")
+    
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    
+        config['networks_buttons'] = [n for n in config.get('networks_buttons', []) if n['id'] != network_id]
+    
+        with open('config/config.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
+    
+        await query.answer("✅ Réseau supprimé")
+        return await manage_networks(update, context)
+
+    elif query.data.startswith("edit_network_"):
+        network_id = query.data.replace("edit_network_", "")
+        context.user_data['editing_network_id'] = network_id
+    
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    
+        network = next((n for n in config.get('networks_buttons', []) if n['id'] == network_id), None)
+        if network:
+            keyboard = [
+                [InlineKeyboardButton("✏️ Modifier le nom", callback_data=f"edit_network_name_{network_id}")],
+                [InlineKeyboardButton("🔗 Modifier la valeur", callback_data=f"edit_network_value_{network_id}")],
+                [InlineKeyboardButton("🔙 Retour", callback_data="edit_network_button")]
+            ]
+        
+            await query.edit_message_text(
+                f"Modification du réseau : {network['name']}\n"
+                f"Type actuel : {network['type']}\n"
+                f"Valeur actuelle : {network['value']}\n\n"
+                "Que souhaitez-vous modifier ?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return CHOOSING
+
+    elif query.data.startswith("edit_network_name_"):
+        network_id = query.data.replace("edit_network_name_", "")
+        context.user_data['editing_network_id'] = network_id
+    
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    
+        network = next((n for n in config.get('networks_buttons', []) if n['id'] == network_id), None)
+    
+        message = await query.edit_message_text(
+            f"✏️ Modification du nom du réseau\n\n"
+            f"Nom actuel : {network['name']}\n\n"
+            "Envoyez le nouveau nom :",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Annuler", callback_data=f"edit_network_{network_id}")
+            ]])
+        )
+    
+        context.user_data['messages_to_delete'] = [message.message_id]
+        return WAITING_BUTTON_NAME
+
+    elif query.data.startswith("edit_network_value_"):
+        network_id = query.data.replace("edit_network_value_", "")
+        context.user_data['editing_network_id'] = network_id
+    
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    
+        network = next((n for n in config.get('networks_buttons', []) if n['id'] == network_id), None)
+    
+        message = await query.edit_message_text(
+            f"✏️ Modification de la valeur du réseau\n\n"
+            f"Valeur actuelle : {network['value']}\n\n"
+            "Envoyez la nouvelle valeur :\n"
+            "• Pour un lien : envoyez une URL commençant par http:// ou https://\n"
+            "• Pour du texte : envoyez le texte à afficher",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Annuler", callback_data=f"edit_network_{network_id}")
+            ]])
+        )
+    
+        context.user_data['messages_to_delete'] = [message.message_id]
+        return WAITING_BUTTON_VALUE
+
+    elif query.data.startswith("network_text_"):
+        network_id = query.data.replace("network_text_", "")
+        with open('config/config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    
+        network = next((n for n in config.get('networks_buttons', []) if n['id'] == network_id), None)
+        if network:
+            await query.edit_message_text(
+                network['value'],
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Retour", callback_data="show_networks")
+                ]]),
+                parse_mode='HTML'
+            )
+        return CHOOSING
+
     # Sous-menu Configuration
     elif query.data == "menu_config":
         if str(update.effective_user.id) not in ADMIN_IDS:
             await query.answer("❌ Accès non autorisé")
             return CHOOSING
-        
+    
         keyboard = [
             [InlineKeyboardButton("🏠 Modifier message d'accueil", callback_data="edit_welcome")],
             [InlineKeyboardButton("🖼️ Modifier image bannière", callback_data="edit_banner_image")],
             [InlineKeyboardButton("🛒 Modifier bouton Commander", callback_data="edit_order_button")],
             [InlineKeyboardButton("🎯 Gérer boutons personnalisés", callback_data="show_custom_buttons")],
+            [InlineKeyboardButton("🌐 Gérer catégorie Réseaux", callback_data="manage_networks")],  # NOUVEAU
             [InlineKeyboardButton("🔙 Retour", callback_data="admin")]
         ]
-    
+
         await query.edit_message_text(
             "🎨 *Configuration du bot*\n\n"
             "Sélectionnez un élément à configurer :",
@@ -2158,48 +2302,26 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             data = get_original_data(query.data)
             if not data:
                 raise ValueError("Données non trouvées")
-            
-            category, product_name = data.split("|||")
-        
-            if category in CATALOG:
-                # Supprimer le produit
-                CATALOG[category] = [p for p in CATALOG[category] if p['name'] != product_name]
-            
-                # IMPORTANT : Si la catégorie est maintenant vide, ajouter SOLD OUT
-                if len(CATALOG[category]) == 0:
-                    CATALOG[category] = [{
-                        'name': 'SOLD OUT ! ❌',
-                        'price': 'Non disponible',
-                        'description': 'Cette catégorie est temporairement en rupture de stock.',
-                        'media': []
-                    }]
                 
-                    await query.message.edit_text(
-                        f"✅ Le produit *{product_name}* a été supprimé avec succès !\n\n"
-                        f"⚠️ La catégorie *{category}* est maintenant vide et a été mise en SOLD OUT automatiquement.",
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
-                        ]])
-                    )
-                else:
-                    # Message normal si la catégorie n'est pas vide
-                    await query.message.edit_text(
-                        f"✅ Le produit *{product_name}* a été supprimé avec succès !",
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
-                        ]])
-                    )
+            category, product_name = data.split("|||")
             
+            if category in CATALOG:
+                CATALOG[category] = [p for p in CATALOG[category] if p['name'] != product_name]
                 save_catalog(CATALOG)
-            
+                
                 # Nettoyer le mapping
                 CALLBACK_DATA_MAPPING.pop(query.data, None)
-            
+                
+                await query.message.edit_text(
+                    f"✅ Le produit *{product_name}* a été supprimé avec succès !",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Retour au menu", callback_data="admin")
+                    ]])
+                )
             else:
                 raise ValueError("Catégorie non trouvée")
-            
+                
             return CHOOSING
         except Exception as e:
             print(f"Erreur lors de la suppression du produit: {e}")
@@ -2351,10 +2473,11 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         if str(query.from_user.id) in ADMIN_IDS:
             keyboard = []
             for category in CATALOG.keys():
-                keyboard.append([InlineKeyboardButton(
-                    f"{category} {'(SOLD OUT ❌)' if not CATALOG[category] else ''}",
-                    callback_data=f"edit_cat_{category}"
-                )])
+                if category != 'stats':  # <- AJOUTEZ CETTE LIGNE
+                    keyboard.append([InlineKeyboardButton(
+                        f"{category} {'(SOLD OUT ❌)' if not CATALOG[category] else ''}",
+                        callback_data=f"edit_cat_{category}"
+                    )])
             keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="admin")])
             await query.message.edit_text(
                 "Choisissez une catégorie à modifier:",
@@ -3261,10 +3384,16 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                
     elif query.data == "show_categories":
         keyboard = []
-        # Créer uniquement les boutons de catégories
+        # Créer uniquement les boutons de catégories avec indication SOLD OUT
         for category in CATALOG.keys():
             if category != 'stats':
-                keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
+                # Vérifier si la catégorie est vide ou contient seulement SOLD OUT
+                is_sold_out = (not CATALOG[category] or 
+                              (len(CATALOG[category]) == 1 and 
+                               CATALOG[category][0].get('name') == 'SOLD OUT ! ❌'))
+            
+                category_display = f"{category} (SOLD OUT ❌)" if is_sold_out else category
+                keyboard.append([InlineKeyboardButton(category_display, callback_data=f"view_{category}")])
 
         # Ajouter uniquement le bouton retour à l'accueil
         keyboard.append([InlineKeyboardButton("🔙 Retour à l'accueil", callback_data="back_to_home")])
@@ -3290,45 +3419,46 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data['menu_message_id'] = message.message_id
 
     elif query.data == "back_to_home":  
-            chat_id = update.effective_chat.id
+        chat_id = update.effective_chat.id
 
-            welcome_text = CONFIG.get('welcome_message', 
-                "🌿 <b>Bienvenue sur votre bot !</b> 🌿\n\n"
-                "<b>Pour changer ce message d accueil, rendez vous dans l onglet admin.</b>\n"
-                "📋 Cliquez sur MENU pour voir les catégories"
-            )
+        welcome_text = CONFIG.get('welcome_message', 
+            "🌿 <b>Bienvenue sur votre bot !</b> 🌿\n\n"
+            "<b>Pour changer ce message d accueil, rendez vous dans l onglet admin.</b>\n"
+            "📋 Cliquez sur MENU pour voir les catégories"
+        )
 
-            keyboard = [
-                [InlineKeyboardButton("📋 MENU", callback_data="show_categories")]
-            ]
+        keyboard = [
+            [InlineKeyboardButton("📋 MENU", callback_data="show_categories")]
+        ]
 
+        with open('config/config.json', 'r') as f:
+            config = json.load(f)
 
-            with open('config/config.json', 'r') as f:
-                config = json.load(f)
+        for button in config.get('custom_buttons', []):
+            if button['type'] == 'url':
+                keyboard.append([InlineKeyboardButton(button['name'], url=button['value'])])
+            elif button['type'] == 'text':
+                keyboard.append([InlineKeyboardButton(button['name'], callback_data=f"custom_text_{button['id']}")])
 
-            for button in config.get('custom_buttons', []):
-                if button['type'] == 'url':
-                    keyboard.append([InlineKeyboardButton(button['name'], url=button['value'])])
-                elif button['type'] == 'text':
-                    keyboard.append([InlineKeyboardButton(button['name'], callback_data=f"custom_text_{button['id']}")])
-
+        # Vérifier si la catégorie Réseaux est activée
+        if config.get('networks_enabled', True):
             keyboard.append([InlineKeyboardButton("📱 Réseaux", callback_data="show_networks")])
 
-            if str(update.effective_user.id) in ADMIN_IDS and access_manager.is_access_code_enabled():
-                keyboard.extend([
-                    [InlineKeyboardButton("🎫 Générer des codes d'accès", callback_data="generate_multiple_codes")],
-                    [InlineKeyboardButton("📜 Historique codes", callback_data="show_codes_history")]
-                ])
+        if str(update.effective_user.id) in ADMIN_IDS and access_manager.is_access_code_enabled():
+            keyboard.extend([
+                [InlineKeyboardButton("🎫 Générer des codes d'accès", callback_data="generate_multiple_codes")],
+                [InlineKeyboardButton("📜 Historique codes", callback_data="show_codes_history")]
+            ])
 
-            if str(update.effective_user.id) in ADMIN_IDS:
-                keyboard.append([InlineKeyboardButton("🔧 Menu Admin", callback_data="admin")])
+        if str(update.effective_user.id) in ADMIN_IDS:
+            keyboard.append([InlineKeyboardButton("🔧 Menu Admin", callback_data="admin")])
 
-            await query.message.edit_text(
-                text=welcome_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='HTML'  
-            )
-            return CHOOSING
+        await query.message.edit_text(
+            text=welcome_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'  
+        )
+        return CHOOSING
 
 async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler temporaire pour obtenir le file_id de l'image banner"""
@@ -3336,99 +3466,15 @@ async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = update.message.photo[-1].file_id
         CONFIG['banner_image'] = file_id
         # Sauvegarder dans config.json
-        with open('config.json', 'w', encoding='utf-8') as f:
+        with open('config/config.json', 'w', encoding='utf-8') as f:
             json.dump(CONFIG, f, indent=4)
         await update.message.reply_text(
             f"✅ Image banner enregistrée!\nFile ID: {file_id}"
         )
-
-
-    # Récupérer le chat_id et le message
-    if update.callback_query:
-        chat_id = update.callback_query.message.chat_id
     else:
-        chat_id = update.effective_chat.id
-
-    # Nouveau clavier simplifié pour l'accueil
-    keyboard = [
-        [InlineKeyboardButton("📋 MENU", callback_data="show_categories")]
-    ]
-
-    # Ajouter le bouton admin si l'utilisateur est administrateur
-    if str(update.effective_user.id) in ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("🔧 Menu Admin", callback_data="admin")])
-
-    # Configurer le bouton de contact en fonction du type (URL ou username)
-    contact_button = None
-    if CONFIG.get('contact_url'):
-        contact_button = InlineKeyboardButton("📞 Contact", url=CONFIG['contact_url'])
-    elif CONFIG.get('contact_username'):
-        contact_button = InlineKeyboardButton("📞 Contact Telegram", url=f"https://t.me/{CONFIG['contact_username']}")
-
-    # Ajouter les boutons de contact et canaux
-    if contact_button:
-        keyboard.extend([
-            [
-                contact_button,
-                InlineKeyboardButton("💭 Canal telegram", url="https://t.me/+aHbA9_8tdTQwYThk")
-            ],
-            [
-                InlineKeyboardButton("🥔 Contact potato", url="https://dlj199.org/christianDry547"),
-                InlineKeyboardButton("📱 Instagram", url="https://www.instagram.com/christiandry.54?igsh=MWU1dXNrbXdpMzllNA%3D%3D&utm_source=qr")
-            ],
-            [
-                InlineKeyboardButton("🌐 Signal", url="https://signal.group/#CjQKIJNEETZNr9_LRMvShQbblk_NUdDyabA7e_eyUQY6-ptsEhBSpXex0cjIoOEYQ4H3D8K5"),
-                InlineKeyboardButton("👻 Snapchat", url="https://snapchat.com/t/0HumwTKi")
-            ]
-        ])
-    else:
-        keyboard.extend([
-            [
-                InlineKeyboardButton("💭 Canal telegram", url="https://t.me/+aHbA9_8tdTQwYThk"),
-                InlineKeyboardButton("🥔 Contact potato", url="https://dlj199.org/christianDry547")
-            ],
-            [
-                InlineKeyboardButton("📱 Instagram", url="https://www.instagram.com/christiandry.54?igsh=MWU1dXNrbXdpMzllNA%3D%3D&utm_source=qr"),
-                InlineKeyboardButton("🌐 Signal", url="https://signal.group/#CjQKIJNEETZNr9_LRMvShQbblk_NUdDyabA7e_eyUQY6-ptsEhBSpXex0cjIoOEYQ4H3D8K5")
-            ],
-            [
-                InlineKeyboardButton("👻 Snapchat", url="https://snapchat.com/t/0HumwTKi")
-            ]
-        ])
-
-    try:
-        if update.callback_query:
-            # Si c'est un callback, on édite le message existant
-            await update.callback_query.edit_message_text(
-                text=welcome_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='HTML'
-            )
-        else:
-            # Sinon, on envoie un nouveau message
-            menu_message = await context.bot.send_message(
-                chat_id=chat_id,
-                text=welcome_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='HTML'
-            )
-            context.user_data['menu_message_id'] = menu_message.message_id
-
-    except Exception as e:
-        print(f"Erreur lors du retour à l'accueil: {e}")
-        # En cas d'erreur, on essaie d'envoyer un nouveau message
-        try:
-            menu_message = await context.bot.send_message(
-                chat_id=chat_id,
-                text=welcome_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='HTML'
-            )
-            context.user_data['menu_message_id'] = menu_message.message_id
-        except Exception as e:
-            print(f"Erreur critique lors du retour à l'accueil: {e}")
-
-    return CHOOSING
+        await update.message.reply_text(
+            "❌ Veuillez envoyer une photo pour l'utiliser comme bannière."
+        )
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
